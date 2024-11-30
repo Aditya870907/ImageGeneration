@@ -1,9 +1,18 @@
 # Stable Diffusion Client/Server System
 
 ## Overview
-This system consists of two main components:
-1. A FastAPI server that handles the Stable Diffusion model loading and image generation
-2. A Python client that manages project configurations and communicates with the server
+This system provides a robust client-server architecture for Stable Diffusion image generation:
+1. A FastAPI server that handles model management and image generation
+2. A Python client that manages project configurations and provides a user-friendly interface
+
+## Key Features
+- Support for both local and online Stable Diffusion models
+- Dynamic prompt generation using Ollama
+- Model comparison capabilities
+- Batch processing
+- Organized output management
+- Automatic memory optimization
+- Comprehensive error handling
 
 ## Server Setup
 
@@ -12,7 +21,7 @@ This system consists of two main components:
 - PyTorch with CUDA support
 - FastAPI
 - Diffusers
-- All dependencies listed in requirements.txt
+- Additional dependencies in requirements.txt
 
 ### Starting the Server
 ```bash
@@ -20,42 +29,49 @@ python server.py
 ```
 
 The server will:
-1. Scan for local models in the `models/` directory
-2. Present a selection of available models (both local and online)
+1. Scan the `models/` directory for local models
+2. Present available models (both local and online)
 3. Initialize the selected model
 4. Start listening on port 8001
 
-### Model Directory Structure
+### Model Management
+
+#### Directory Structure
 ```
 models/
-└── your_model.safetensors
-└── your_model.json  # Optional model info file
+├── model1.safetensors
+│   └── model1.json       # Optional model info
+├── model2.safetensors
+│   └── model2.json
+└── ...
 ```
 
-The JSON file can contain additional model information:
+#### Model Information (JSON)
 ```json
 {
     "model_type": "SD" or "SDXL",
     "base_model": "SD 1.5",
     "description": "Model description",
-    "merged_from": ["model1", "model2"]
+    "merged_from": ["model1", "model2"],
+    "default_size": 512
 }
 ```
 
 ## Client Usage
 
-### Project Structure
+### Project Organization
 ```
 projects/
 └── your_project/
-    ├── config.yaml
-    └── prompts.yaml
+    ├── config.yaml      # Server and generation settings
+    └── prompts.yaml     # Predefined prompts
 ```
 
 ### Configuration Files
 
 #### config.yaml
 ```yaml
+# Server configuration
 server_url: "http://192.168.1.101:8001"
 name: "project_name"
 
@@ -69,6 +85,8 @@ default_params:
   karras_sigmas: true
   scheduler_scale: 0.7
   clip_skip: 2
+  
+  # Performance optimizations
   enable_attention_slicing: true
   enable_vae_slicing: true
   enable_vae_tiling: false
@@ -94,65 +112,113 @@ prompt_sets:
     params:
       width: 768
       height: 512
+      guidance_scale: 8.0
 ```
 
-### Basic Commands
+### Command Reference
 
-1. List available prompts in a project:
+#### Basic Operations
 ```bash
+# List available prompts
 python client.py --input projects --project your_project --list
-```
 
-2. Generate an image using a predefined prompt:
-```bash
+# Generate single image with predefined prompt
 python client.py --input projects --project your_project --prompt landscape
-```
 
-3. Generate multiple images (batch mode):
-```bash
+# Generate multiple images (batch mode)
 python client.py --input projects --project your_project --prompt landscape --batch 5
-```
 
-4. Use Ollama for dynamic prompt generation:
-```bash
+# Use Ollama for dynamic prompt generation
 python client.py --input projects --project your_project --ollama
-```
 
-5. Generate multiple images with Ollama:
-```bash
+# Batch generation with Ollama
 python client.py --input projects --project your_project --ollama --batch 5
 ```
 
+#### Model Comparison
+```bash
+# Compare all models with single prompt
+python client.py --input projects --project your_project --prompt landscape --compare
+
+# Compare models with multiple iterations
+python client.py --input projects --project your_project --prompt landscape --compare --batch 3
+```
+
 ### Output Structure
+
 ```
 outputs/
 └── project_name/
     └── prompt_name/
-        └── timestamp_model/
+        ├── timestamp_model/           # Single model output
+        │   ├── images/
+        │   │   └── image_timestamp.png
+        │   └── metadata/
+        │       └── metadata_timestamp.yaml
+        │
+        └── comparison_timestamp/      # Model comparison output
             ├── images/
-            │   └── image_timestamp.png
+            │   ├── model1_timestamp.png
+            │   ├── model2_timestamp.png
+            │   └── ...
             └── metadata/
-                └── metadata_timestamp.yaml
+                ├── model1_timestamp.yaml
+                ├── model2_timestamp.yaml
+                └── ...
 ```
 
-Each generation produces:
-- The generated image(s)
-- Metadata files containing:
-  - Timestamp
-  - Used prompt
-  - Model settings
-  - Generation parameters
-  - Seed value
+#### Metadata Contents
+Each generation produces a YAML file containing:
+- Timestamp and seed value
+- Used prompt and negative prompt
+- Model information
+- Generation parameters
+- Performance settings
 
-## Notes
-- When using --ollama, the system will generate dynamic prompts using the LLM specified in config.yaml
-- All prompts are automatically adjusted to be exactly 77 tokens
-- The server automatically handles memory management and model loading
-- Images and metadata are saved with timestamps for easy tracking
-- The server provides a /health endpoint for monitoring system status
+## Advanced Features
 
-## Error Handling
-- The client will validate all configuration files before running
-- Missing or invalid configurations will result in clear error messages
-- The server includes automatic memory management and error recovery
-- Failed generations will be logged with detailed error information
+### Model Comparison
+- Compare outputs across multiple models
+- Use same prompt and parameters for fair comparison
+- Generate side-by-side results
+- Save comprehensive metadata for each model
+
+### Dynamic Prompts
+- Integration with Ollama for AI-generated prompts
+- Automatic token length optimization (77 tokens)
+- Quality-focused prompt enhancement
+- Fallback handling for reliability
+
+### Performance Optimization
+- Automatic memory management
+- VAE and attention optimizations
+- Model offloading options
+- Configurable batch processing
+
+## Error Handling and Reliability
+
+### Validation
+- Configuration file validation
+- Server health monitoring
+- Model compatibility checks
+- Parameter range verification
+
+### Recovery
+- Automatic retry mechanisms
+- Graceful failure handling
+- Detailed error logging
+- Session recovery options
+
+### Monitoring
+- Server health endpoint
+- Generation progress tracking
+- Resource usage monitoring
+- Batch progress indicators
+
+## Best Practices
+1. Start with recommended parameters in config.yaml
+2. Use model comparison to find best model for your use case
+3. Enable optimization flags based on your hardware
+4. Monitor GPU memory usage for optimal batch sizes
+5. Keep prompts consistent for valid comparisons
+6. Regular server health checks during long runs
