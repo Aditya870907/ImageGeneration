@@ -1,0 +1,12 @@
+prompt_sets:
+  - name: "set1"
+    prompt: "prompt"
+    params:
+      num_steps: 30
+      guidance_scale: 9.0
+      width: 1024
+      height: 768
+
+  - name: "set2"
+    prompt: "prompt"
+    

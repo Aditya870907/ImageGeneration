@@ -1,0 +1,21 @@
+name: sd_env
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch-cuda=11.8
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  - pip:
+    - diffusers
+    - transformers
+    - accelerate
+    - safetensors
+    - pillow
+    - fastapi
+    - uvicorn
+    - python-multipart

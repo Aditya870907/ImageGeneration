@@ -1,0 +1,23 @@
+server_url: "http://192.168.1.101:8001"
+default_params:
+  width: 512
+  height: 512
+  num_steps: 30
+  guidance_scale: 7.5
+  scheduler_type: "dpmsolver++"
+  karras_sigmas: true
+  scheduler_scale: 0.7
+  clip_skip: 2
+  enable_attention_slicing: true
+  enable_vae_slicing: true
+  enable_vae_tiling: false
+  enable_model_cpu_offload: true
+  enable_sequential_cpu_offload: false
+
+ollama:
+  server_url: "http://localhost:11434"
+  model: "llama2"
+  system_message: "You are an expert at creating image generation prompts. Generate a detailed, creative prompt that will result in a visually stunning image. The prompt must be exactly 77 tokens long."
+  prompt: "Create a detailed and creative image generation prompt that captures an interesting scene or concept."
+  negative_prompt: "bad quality, low resolution, blurry"
+  fallback_prompt: "A high quality, detailed masterpiece showing a beautiful landscape with mountains and trees."
