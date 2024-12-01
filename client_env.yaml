@@ -9,3 +9,6 @@ dependencies:
     - requests
     - pillow
     - argparse
+    - tiktoken
+    - pyyaml
+    - tqdm
