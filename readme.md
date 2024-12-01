@@ -72,7 +72,7 @@ projects/
 #### config.yaml
 ```yaml
 # Server configuration
-server_url: "http://192.168.1.101:8001"
+server_url: "http://localhost:8001"
 name: "project_name"
 
 # Default generation parameters
