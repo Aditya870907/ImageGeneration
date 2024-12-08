@@ -141,14 +141,7 @@ def get_all_models():
             'is_local': False,
             'base_model': 'SD 1.4'
         },
-        {
-            'name': 'Hassan-SDXL',
-            'id': 'hassanblend/Hassan-SDXL',
-            'type': 'SDXL',
-            'default_size': 1024,
-            'is_local': False,
-            'base_model': 'SDXL 1.0'
-        },
+
         {
             'name': 'Stable Diffusion XL 1.0',
             'id': 'stabilityai/stable-diffusion-xl-base-1.0',
