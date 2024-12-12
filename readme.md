@@ -253,7 +253,7 @@ outputs/
 
 ### Building From Source
 ```bash
-git clone https://github.com/yourusername/stable-diffusion-client
+git clone https://github.com/SikamikanikoBG/ImageGenerator
 cd stable-diffusion-client
 pip install -r requirements.txt
 ```
