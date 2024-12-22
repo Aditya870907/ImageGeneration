@@ -2,3 +2,8 @@
 /models/
 /.idea/
 /logs/
+input/tease/config.yaml
+input/tease/prompts.yaml
+src/__pycache__/__init__.cpython-310.pyc
+src/__pycache__/img2vid.cpython-310.pyc
+.gitignore
