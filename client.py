@@ -428,8 +428,14 @@ class GradioInterface:
                         color: #2f7d32;
                     }
                 """
-        # Create interface after default_css is defined
-        self.interface = self.create_interface()
+        self.blocks = self.create_interface()
+
+    def _create_header(self):
+        """Create the header section of the interface"""
+        gr.Markdown("""
+        # Enhanced Stable Diffusion Image Generator
+        Generate high-quality images with multiple models and advanced settings.
+        """)
 
     def create_interface(self) -> gr.Blocks:
         with gr.Blocks(title="Enhanced Stable Diffusion Image Generator", css=self.default_css) as app:
@@ -441,20 +447,21 @@ class GradioInterface:
             is_generating = gr.State(False)
 
             with gr.Tabs() as tabs:
-                connection_tab = self._create_connection_tab()
-                project_tab = self._create_project_tab()
-                settings_tab = self._create_settings_tab()
-                prompt_tab = self._create_prompt_tab()
+                # Combined Connection & Settings tab
+                configuration_tab = self._create_configuration_tab()
+                
+                # Combined Project & Prompt tab with generation controls
+                generation_tab = self._create_generation_tab()
+                
+                # Output tab (kept separate)
                 output_tab = self._create_output_tab()
 
-                # Add the new I2V tab
+                # Image to Video tab (unchanged)
                 i2v_tab = I2VTab(self.generator).create_tab()
 
             self._setup_event_handlers(
-                connection_tab,
-                project_tab,
-                settings_tab,
-                prompt_tab,
+                configuration_tab,
+                generation_tab,
                 output_tab,
                 prompts_data,
                 models_state,
@@ -463,15 +470,10 @@ class GradioInterface:
 
         return app
 
-    def _create_header(self):
-        gr.Markdown("""
-        # Enhanced Stable Diffusion Image Generator
-        Generate high-quality images with multiple models and advanced settings.
-        """)
-
-    def _create_connection_tab(self) -> Dict:
-        with gr.Tab("🔌 Connection", id="connection"):
+    def _create_configuration_tab(self) -> Dict:
+        with gr.Tab("⚙️ Configuration", id="configuration"):
             with gr.Group():
+                # Server Configuration Section
                 gr.Markdown("### Server Configuration")
                 with gr.Row():
                     server_url = gr.Textbox(
@@ -483,39 +485,8 @@ class GradioInterface:
                     refresh_btn = gr.Button("🔄 Refresh Models", scale=1)
                 server_status = gr.Markdown("Server status: Not connected")
 
-        return {
-            "server_url": server_url,
-            "refresh_btn": refresh_btn,
-            "server_status": server_status
-        }
-
-    def _create_project_tab(self) -> Dict:
-        with gr.Tab("📁 Project", id="project"):
-            with gr.Group():
-                gr.Markdown("### Project Settings")
-                with gr.Row():
-                    prompts_file = gr.File(
-                        label="Upload prompts.yaml",
-                        file_types=[".yaml", ".yml"],
-                        scale=4
-                    )
-                prompts_status = gr.Markdown("No prompts loaded")
-                prompt_set = gr.Dropdown(
-                    label="Select Prompt Set",
-                    choices=[],
-                    interactive=True
-                )
-
-        return {
-            "prompts_file": prompts_file,
-            "prompts_status": prompts_status,
-            "prompt_set": prompt_set
-        }
-
-    def _create_settings_tab(self) -> Dict:
-        with gr.Tab("⚙️ Settings", id="settings"):
-            with gr.Group():
-                gr.Markdown("### Generation Settings")
+                # Model Settings Section
+                gr.Markdown("### Model Settings")
                 with gr.Row():
                     model_selection = gr.Dropdown(
                         label="Select Model(s)",
@@ -530,18 +501,8 @@ class GradioInterface:
                         scale=1
                     )
 
-                with gr.Row():
-                    name_prefix = gr.Textbox(
-                        label="Output Name Prefix",
-                        value="generated",
-                        scale=2
-                    )
-                    output_dir = gr.Textbox(
-                        label="Output Directory",
-                        value="outputs",
-                        scale=2
-                    )
-
+                # Generation Settings Section
+                gr.Markdown("### Generation Settings")
                 with gr.Row():
                     with gr.Column(scale=1):
                         steps = gr.Slider(
@@ -590,22 +551,39 @@ class GradioInterface:
                         scale=2
                     )
 
-        return {
-            "model_selection": model_selection,
-            "compare_mode": compare_mode,
-            "name_prefix": name_prefix,
-            "output_dir": output_dir,
-            "steps": steps,
-            "guidance_scale": guidance_scale,
-            "width": width,
-            "height": height,
-            "scheduler_type": scheduler_type,
-            "batch_size": batch_size
-        }
+            return {
+                "server_url": server_url,
+                "refresh_btn": refresh_btn,
+                "server_status": server_status,
+                "model_selection": model_selection,
+                "compare_mode": compare_mode,
+                "steps": steps,
+                "guidance_scale": guidance_scale,
+                "width": width,
+                "height": height,
+                "scheduler_type": scheduler_type,
+                "batch_size": batch_size
+            }
 
-    def _create_prompt_tab(self) -> Dict:
-        with gr.Tab("✏️ Prompt", id="prompt"):
+    def _create_generation_tab(self) -> Dict:
+        with gr.Tab("🎨 Generation", id="generation"):
             with gr.Group():
+                # Project Settings Section
+                gr.Markdown("### Project Settings")
+                with gr.Row():
+                    prompts_file = gr.File(
+                        label="Upload prompts.yaml",
+                        file_types=[".yaml", ".yml"],
+                        scale=4
+                    )
+                prompts_status = gr.Markdown("No prompts loaded")
+                prompt_set = gr.Dropdown(
+                    label="Select Prompt Set",
+                    choices=[],
+                    interactive=True
+                )
+
+                # Prompt Configuration Section
                 gr.Markdown("### Prompt Configuration")
                 prompt = gr.Textbox(
                     label="Prompt",
@@ -618,15 +596,21 @@ class GradioInterface:
                     lines=3
                 )
 
-        return {
-            "prompt": prompt,
-            "negative_prompt": negative_prompt
-        }
+                # Output Configuration
+                gr.Markdown("### Output Configuration")
+                with gr.Row():
+                    name_prefix = gr.Textbox(
+                        label="Output Name Prefix",
+                        value="generated",
+                        scale=2
+                    )
+                    output_dir = gr.Textbox(
+                        label="Output Directory",
+                        value="outputs",
+                        scale=2
+                    )
 
-    def _create_output_tab(self) -> Dict:
-        with gr.Tab("🖼️ Output", id="output"):
-            with gr.Group():
-                gr.Markdown("### Generation Output")
+                # Generation Controls
                 with gr.Row():
                     generate_btn = gr.Button(
                         "🚀 Generate Images",
@@ -639,6 +623,22 @@ class GradioInterface:
                         scale=1
                     )
 
+            return {
+                "prompts_file": prompts_file,
+                "prompts_status": prompts_status,
+                "prompt_set": prompt_set,
+                "prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "name_prefix": name_prefix,
+                "output_dir": output_dir,
+                "generate_btn": generate_btn,
+                "cancel_btn": cancel_btn
+            }
+
+    def _create_output_tab(self) -> Dict:
+        with gr.Tab("🖼️ Output", id="output"):
+            with gr.Group():
+                gr.Markdown("### Generation Output")
                 generation_status = gr.HTML(
                     value='<div class="generating-status">Ready to generate</div>'
                 )
@@ -648,91 +648,87 @@ class GradioInterface:
                 )
                 status_output = gr.Markdown("Status: Ready")
 
-        return {
-            "generate_btn": generate_btn,
-            "cancel_btn": cancel_btn,
-            "generation_status": generation_status,
-            "gallery_output": gallery_output,
-            "status_output": status_output
-        }
+            return {
+                "generation_status": generation_status,
+                "gallery_output": gallery_output,
+                "status_output": status_output
+            }
 
     def _setup_event_handlers(
             self,
-            connection_tab: Dict,
-            project_tab: Dict,
-            settings_tab: Dict,
-            prompt_tab: Dict,
+            configuration_tab: Dict,
+            generation_tab: Dict,
             output_tab: Dict,
             prompts_data: gr.State,
             models_state: gr.State,
             is_generating: gr.State
     ):
         # Refresh models event
-        connection_tab["refresh_btn"].click(
+        configuration_tab["refresh_btn"].click(
             self._refresh_models,
-            inputs=[connection_tab["server_url"]],
+            inputs=[configuration_tab["server_url"]],
             outputs=[
-                connection_tab["server_status"],
+                configuration_tab["server_status"],
                 models_state,
-                settings_tab["model_selection"],
+                configuration_tab["model_selection"],
                 models_state
             ]
         )
 
         # Load prompts event
-        project_tab["prompts_file"].upload(
+        generation_tab["prompts_file"].upload(
             self._load_prompts,
-            inputs=[project_tab["prompts_file"]],
+            inputs=[generation_tab["prompts_file"]],
             outputs=[
                 prompts_data,
-                project_tab["prompt_set"],
-                project_tab["prompts_status"]
+                generation_tab["prompt_set"],
+                generation_tab["prompts_status"]
             ]
         )
 
         # Update from prompt set event
-        project_tab["prompt_set"].change(
+        generation_tab["prompt_set"].change(
             self._update_from_prompt_set,
-            inputs=[project_tab["prompt_set"], prompts_data],
+            inputs=[generation_tab["prompt_set"], prompts_data],
             outputs=[
-                prompt_tab["prompt"],
-                prompt_tab["negative_prompt"],
-                settings_tab["steps"],
-                settings_tab["guidance_scale"],
-                settings_tab["width"],
-                settings_tab["height"],
-                settings_tab["scheduler_type"]
+                generation_tab["prompt"],
+                generation_tab["negative_prompt"],
+                configuration_tab["steps"],
+                configuration_tab["guidance_scale"],
+                configuration_tab["width"],
+                configuration_tab["height"],
+                configuration_tab["scheduler_type"]
             ]
         )
 
         # Compare mode update event
-        settings_tab["compare_mode"].change(
+        configuration_tab["compare_mode"].change(
             self._update_compare_mode,
-            inputs=[settings_tab["compare_mode"]],
+            inputs=[configuration_tab["compare_mode"]],
             outputs=[
-                settings_tab["model_selection"],
-                settings_tab["batch_size"],
+                configuration_tab["model_selection"],
+                configuration_tab["batch_size"],
                 output_tab["generation_status"]
             ]
         )
 
         # Generate images event
-        gen_event = output_tab["generate_btn"].click(
+        gen_event = generation_tab["generate_btn"].click(
             self._generate,
             inputs=[
-                connection_tab["server_url"],
-                settings_tab["model_selection"],
-                settings_tab["compare_mode"],
-                prompt_tab["prompt"],
-                prompt_tab["negative_prompt"],
-                settings_tab["steps"],
-                settings_tab["guidance_scale"],
-                settings_tab["width"],
-                settings_tab["height"],
-                settings_tab["scheduler_type"],
-                settings_tab["batch_size"],
-                settings_tab["output_dir"],
-                settings_tab["name_prefix"],
+                configuration_tab["server_url"],
+                configuration_tab["model_selection"],
+                configuration_tab["compare_mode"],
+                generation_tab["prompt"],
+                generation_tab["negative_prompt"],
+                configuration_tab["steps"],
+                configuration_tab["guidance_scale"],
+                configuration_tab["width"],
+                configuration_tab["height"],
+                configuration_tab["scheduler_type"],
+                configuration_tab["batch_size"],
+                generation_tab["output_dir"],
+                generation_tab["name_prefix"],
                 models_state
             ],
             outputs=[
@@ -743,7 +739,7 @@ class GradioInterface:
         )
 
         # Cancel generation event
-        output_tab["cancel_btn"].click(
+        generation_tab["cancel_btn"].click(
             self._cancel_generation,
             outputs=[
                 output_tab["generation_status"],
@@ -754,14 +750,8 @@ class GradioInterface:
         )
 
         # Generation status updates
-        output_tab["generate_btn"].click(
+        generation_tab["generate_btn"].click(
             lambda: True,
-            outputs=is_generating,
-            queue=False
-        )
-
-        output_tab["cancel_btn"].click(
-            lambda: False,
             outputs=is_generating,
             queue=False
         )
@@ -839,6 +829,37 @@ class GradioInterface:
             "",
             "Generation cancelled by user"
         )
+
+    def _create_gallery_html(self, results: List[Dict]) -> str:
+        """Create HTML for the image gallery"""
+        gallery_html = '<div class="gallery-container">'
+
+        for result in results:
+            try:
+                buffered = io.BytesIO()
+                result['image'].save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                model_name = result.get('model_name', 'Unknown Model')
+                base_model = result.get('base_model', 'Unknown Base')
+
+                gallery_html += f'''
+                <div class="image-container">
+                    <img src="data:image/png;base64,{img_str}" 
+                         title="{model_name} ({base_model})"
+                         alt="{model_name}"
+                    />
+                    <div class="image-label">
+                        <div style="font-weight:bold;color:#1a73e8;">{model_name}</div>
+                        <div style="font-size:0.9em;color:#666;">({base_model})</div>
+                    </div>
+                </div>
+                '''
+            except Exception as e:
+                print(f"Error processing gallery image: {str(e)}")
+                continue
+
+        gallery_html += '</div>'
+        return gallery_html
 
     def _generate(
             self,
@@ -969,50 +990,6 @@ class GradioInterface:
                 error_msg
             )
 
-    def _create_gallery_html(self, results: List[Dict]) -> str:
-        """Create HTML for the image gallery"""
-        gallery_html = '<div class="gallery-container">'
-
-        for result in results:
-            try:
-                buffered = io.BytesIO()
-                result['image'].save(buffered, format="PNG")
-                img_str = base64.b64encode(buffered.getvalue()).decode()
-                model_name = result.get('model_name', 'Unknown Model')
-                base_model = result.get('base_model', 'Unknown Base')
-
-                gallery_html += f'''
-                <div class="image-container">
-                    <img src="data:image/png;base64,{img_str}" 
-                         title="{model_name} ({base_model})"
-                         alt="{model_name}"
-                    />
-                    <div class="image-label">
-                        <div style="font-weight:bold;color:#1a73e8;">{model_name}</div>
-                        <div style="font-size:0.9em;color:#666;">({base_model})</div>
-                    </div>
-                </div>
-                '''
-            except Exception as e:
-                print(f"Error processing gallery image: {str(e)}")
-                continue
-
-        gallery_html += '</div>'
-        return gallery_html
-
-    def launch(self, **kwargs):
-        """Launch the Gradio interface with specified parameters"""
-        default_kwargs = {
-            'server_name': "0.0.0.0",
-            'server_port': 7860,
-            'share': False,
-            'debug': False,
-            'show_error': True,
-            'max_threads': 10
-        }
-        launch_kwargs = {**default_kwargs, **kwargs}
-        return self.interface.launch(**launch_kwargs)
-
 if __name__ == "__main__":
     import argparse
 
@@ -1022,9 +999,9 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     args = parser.parse_args()
 
-    # Create and launch the interface
-    app = GradioInterface()
-    app.launch(
+    # Create the interface and launch directly from the blocks object
+    interface = GradioInterface()
+    interface.blocks.launch(
         server_port=args.port,
         share=args.share,
         debug=args.debug
