@@ -1,356 +1,210 @@
-import os
-from pathlib import Path
 import torch
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, DPMSolverMultistepScheduler
-from transformers import CLIPTextModel, CLIPTokenizer
-import uvicorn
-from pydantic import BaseModel, Field
+from torch import autocast
+from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler, DDIMScheduler, EulerDiscreteScheduler, EulerAncestralDiscreteScheduler
+from flask import Flask, request, jsonify
 import base64
-from io import BytesIO
+import io
+import random
+import os
 import logging
-from typing import Optional, List, Dict
-import gc
-from contextlib import asynccontextmanager
-from src.model_detection import ModelDetector
-
-# Configure memory management
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+from PIL import Image
+from model_detection import ModelDetector
+from pathlib import Path
+import time
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+app = Flask(__name__)
+
 # Global variables
-pipe = None
 current_model = None
+pipe = None
+model_cache = {}
 available_models = []
 
-class GenerationRequest(BaseModel):
-    prompt: str
-    negative_prompt: str = ""
-    width: int = Field(default=512, ge=384, le=2048)
-    height: int = Field(default=512, ge=384, le=2048)
-    num_steps: int = Field(default=30, ge=1, le=150)
-    guidance_scale: float = Field(default=7.5, ge=1.0, le=20.0)
-    num_images: int = Field(default=1, ge=1, le=4)
-    seed: Optional[int] = None
-    clip_skip: Optional[int] = Field(default=None, ge=1, le=4)
-    model_id: Optional[str] = None
-    scheduler_type: str = Field(default="dpmsolver++", pattern="^(dpmsolver\+\+|euler_a|euler|ddim)$")
-    karras_sigmas: bool = True
-    scheduler_scale: float = Field(default=0.7, ge=0.1, le=1.0)
-    enable_attention_slicing: bool = True
-    enable_vae_slicing: bool = True
-    enable_vae_tiling: bool = True
-    enable_model_cpu_offload: bool = False
-    use_gpu: bool = True
+# Server configuration
+MODEL_BASE_DIR = "/content/drive/MyDrive/ImageGenerator/models"
 
-class GenerationResponse(BaseModel):
-    image_base64: str
-    seed: int
-    generation_settings: dict
-    model_info: dict
-
-def clear_memory():
-    """Clear GPU memory and garbage collect"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-    gc.collect()
-
-def get_all_models():
-    """Get list of available models"""
-    return ModelDetector.scan_models_directory("models")
-
-async def initialize_model(model_info: Dict) -> bool:
-    """Initialize the model pipeline with proper CLIP handling"""
-    global pipe, current_model
-
-    try:
-        clear_memory()
-        logger.info(f"Initializing {model_info['name']}...")
-
-        is_xl = model_info['type'] == 'SDXL' or 'xl' in model_info['name'].lower()
-        model_path = model_info['id']
-
-        # Initialize text encoder first if not XL
-        if not is_xl:
-            try:
-                text_encoder = CLIPTextModel.from_pretrained(
-                    "openai/clip-vit-large-patch14",
-                    torch_dtype=torch.float16
-                ).to("cuda")
-                tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-            except Exception as e:
-                logger.warning(f"Failed to load CLIP components: {e}")
-                text_encoder = None
-                tokenizer = None
-
-        # Initialize pipeline with appropriate configuration
-        if is_xl:
-            pipe = StableDiffusionXLPipeline.from_single_file(
-                model_path,
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-                variant="fp16"
-            )
-        else:
-            pipe_kwargs = {
-                "torch_dtype": torch.float16,
-                "use_safetensors": True,
-                "variant": "fp16"
-            }
-            
-            if text_encoder is not None and tokenizer is not None:
-                pipe_kwargs.update({
-                    "text_encoder": text_encoder,
-                    "tokenizer": tokenizer
-                })
-                
-            pipe = StableDiffusionPipeline.from_single_file(model_path, **pipe_kwargs)
-
-        # Move to CUDA
-        pipe = pipe.to("cuda")
-
-        # Enable optimizations
-        pipe.enable_attention_slicing(slice_size="max")
-        pipe.enable_vae_slicing()
-        if is_xl:
-            pipe.enable_vae_tiling()
-
-        # Set scheduler
-        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
-            pipe.scheduler.config,
-            algorithm_type="dpmsolver++",
-            use_karras_sigmas=True
-        )
-
-        current_model = model_info
-        clear_memory()
-        logger.info(f"Successfully initialized {model_info['name']}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Model initialization error: {str(e)}", exc_info=True)
-        clear_memory()
-        raise RuntimeError(f"Failed to initialize pipeline: {str(e)}")
-
-async def generate_with_model(request: GenerationRequest, model_info: Dict) -> GenerationResponse:
-    """Generate image with improved error handling"""
-    global pipe, current_model
+def initialize_server():
+    """Initialize the server by detecting models"""
+    global available_models
     
-    try:
-        if pipe is None or current_model is None or current_model['id'] != model_info['id']:
-            await initialize_model(model_info)
-
-        # Handle dimensions
-        is_xl = model_info['type'] == 'SDXL' or 'xl' in model_info['name'].lower()
-        if request.width > model_info['default_size'] or request.height > model_info['default_size']:
-            request.width = model_info['default_size']
-            request.height = model_info['default_size']
-
-        # Prepare generator
-        generator = torch.Generator(device="cuda")
-        if request.seed is not None:
-            generator.manual_seed(request.seed)
-        else:
-            generator.manual_seed(torch.randint(0, 2**32 - 1, (1,)).item())
-
-        try:
-            with torch.inference_mode():
-                try:
-                    # Prepare generation parameters
-                    generation_params = {
-                        "prompt": request.prompt,
-                        "negative_prompt": request.negative_prompt,
-                        "num_inference_steps": request.num_steps,
-                        "guidance_scale": request.guidance_scale,
-                        "width": request.width,
-                        "height": request.height,
-                        "generator": generator,
-                        "output_type": "pil",
-                        "num_images_per_prompt": 1
-                    }
-                    
-                    # Remove num_images_per_prompt for XL models as they don't support it
-                    if is_xl:
-                        generation_params.pop("num_images_per_prompt", None)
-                    
-                    output = pipe(**generation_params)
-                    
-                    if not hasattr(output, 'images') or len(output.images) == 0:
-                        raise RuntimeError("No images were generated in the output")
-
-                except Exception as gen_error:
-                    logger.error(f"First generation attempt failed: {str(gen_error)}")
-                    # Try again with simplified parameters
-                    fallback_params = {
-                        "prompt": request.prompt,
-                        "negative_prompt": "",
-                        "num_inference_steps": 20,
-                        "guidance_scale": 7.5,
-                        "width": 512 if not is_xl else 1024,
-                        "height": 512 if not is_xl else 1024,
-                        "generator": generator,
-                        "output_type": "pil"
-                    }
-                    
-                    output = pipe(**fallback_params)
-
-                    if not hasattr(output, 'images') or len(output.images) == 0:
-                        raise RuntimeError("No images were generated in fallback attempt")
-
-            # Process output
-            image = output.images[0]
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            img_str = base64.b64encode(buffered.getvalue()).decode()
-
-            return GenerationResponse(
-                image_base64=img_str,
-                seed=generator.initial_seed(),
-                generation_settings={
-                    "model": model_info['name'],
-                    "base_model": model_info['base_model'],
-                    "seed": generator.initial_seed(),
-                    "prompt": request.prompt,
-                    "negative_prompt": request.negative_prompt,
-                    "steps": request.num_steps,
-                    "guidance_scale": request.guidance_scale,
-                    "dimensions": f"{request.width}x{request.height}"
-                },
-                model_info=model_info
-            )
-
-        except Exception as e:
-            logger.error(f"Generation error: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
-
-    except Exception as e:
-        logger.error(f"Generation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
-
-    finally:
-        if request.model_id and current_model and request.model_id != current_model['id']:
-            clear_memory()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Initialize the server"""
-    global available_models, pipe, current_model
+    logger.info("Initializing Stable Diffusion server...")
     
-    try:
-        available_models = get_all_models()
-        logger.info(f"Found {len(available_models)} models")
-        
-        if not available_models:
-            logger.warning("No models found. Server will start but won't be able to generate images.")
-        else:
-            for model in available_models:
-                logger.info(f"Available model: {model['name']} ({model['base_model']})")
-        
-        pipe = None
-        current_model = None
-        logger.info("Server initialized and ready")
-        
-    except Exception as e:
-        logger.error(f"Initialization error: {e}")
-        raise
-
-    yield
-    clear_memory()
-
-app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.post("/generate")
-async def generate_image(request: GenerationRequest):
-    """Generate image endpoint"""
-    global pipe, current_model
+    # Ensure directories exist
+    os.makedirs(MODEL_BASE_DIR, exist_ok=True)
     
-    try:
-        # Case 1: Specific model requested
-        if request.model_id:
-            model_info = next((m for m in available_models if m['id'] == request.model_id), None)
-            if not model_info:
-                raise HTTPException(status_code=404, detail=f"Model {request.model_id} not found")
-            logger.info(f"Using requested model: {model_info['name']}")
-            return await generate_with_model(request, model_info)
-        
-        # Case 2: Use current model if available
-        elif current_model and pipe:
-            logger.info(f"Using current model: {current_model['name']}")
-            return await generate_with_model(request, current_model)
-        
-        # Case 3: No model loaded, use first available
-        elif available_models:
-            model_info = available_models[0]
-            logger.info(f"Using first available model: {model_info['name']}")
-            return await generate_with_model(request, model_info)
-        
-        # Case 4: No models available
-        else:
-            raise HTTPException(status_code=500, detail="No models available for generation")
-            
-    except Exception as e:
-        logger.error(f"Generation error: {str(e)}", exc_info=True)
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/models")
-async def list_models():
-    """List all available models"""
-    return {"models": available_models}
-
-@app.get("/health")
-async def health_check():
-    """Check server health and status"""
-    if torch.cuda.is_available():
-        memory_info = torch.cuda.mem_get_info()
-        free_memory = memory_info[0] / 1024**3
-        total_memory = memory_info[1] / 1024**3
-        used_memory = total_memory - free_memory
+    # Detect available models
+    available_models = ModelDetector.scan_models_directory(MODEL_BASE_DIR)
+    
+    logger.info(f"Detected {len(available_models)} models: {[m['name'] for m in available_models]}")
+    
+    # Load the default model if available
+    default_model_path = Path(MODEL_BASE_DIR) / "Stable-diffusion" / "v1-5-pruned-emaonly.safetensors"
+    if default_model_path.exists():
+        load_model(str(default_model_path))
+    elif available_models:
+        load_model(available_models[0]["id"])
     else:
-        free_memory = total_memory = used_memory = 0
+        logger.warning("No models found for initialization")
 
-    return {
-        "status": "ok",
-        "cuda_available": torch.cuda.is_available(),
-        "model_loaded": pipe is not None,
-        "current_model": {
-            "name": current_model['name'],
-            "type": current_model['type'],
-            "base_model": current_model['base_model'],
-            "default_size": current_model['default_size'],
-            "description": current_model.get('description', '')
-        } if current_model else None,
-        "gpu_info": {
-            "name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-            "total_memory_gb": f"{total_memory:.2f}",
-            "used_memory_gb": f"{used_memory:.2f}",
-            "free_memory_gb": f"{free_memory:.2f}"
-        },
-        "available_models": len(available_models),
-        "ready_for_generation": len(available_models) > 0
-    }
+def get_scheduler(scheduler_name, pipe):
+    """Return the appropriate scheduler based on name"""
+    if scheduler_name == "dpmsolver++":
+        return DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+    elif scheduler_name == "euler":
+        return EulerDiscreteScheduler.from_config(pipe.scheduler.config)
+    elif scheduler_name == "euler_a":
+        return EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
+    elif scheduler_name == "ddim":
+        return DDIMScheduler.from_config(pipe.scheduler.config)
+    else:
+        logger.warning(f"Unknown scheduler {scheduler_name}, using default")
+        return DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description='Stable Diffusion Server')
-    parser.add_argument('--host', type=str, default="0.0.0.0", help='Host to bind to')
-    parser.add_argument('--port', type=int, default=8001, help='Port to bind to')
-    parser.add_argument('--log-level', type=str, default="info",
-                       choices=['debug', 'info', 'warning', 'error', 'critical'])
-    args = parser.parse_args()
+def load_model(model_id):
+    """Load a Stable Diffusion model"""
+    global pipe, current_model
     
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"Using device: {device}")
+    
+    try:
+        # Find model info
+        model_info = None
+        for model in available_models:
+            if model["id"] == model_id:
+                model_info = model
+                break
+        
+        if not model_info:
+            logger.warning(f"Model {model_id} not found in available models")
+            return False
+            
+        logger.info(f"Loading model: {model_info['name']}")
+        start_time = time.time()
+        
+        # Load the model
+        pipe = StableDiffusionPipeline.from_single_file(
+            model_id,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            use_safetensors=True
+        )
+        
+        # Move to device
+        pipe = pipe.to(device)
+        
+        # Optimization for memory
+        if device == "cuda":
+            pipe.enable_attention_slicing()
+        
+        current_model = model_info
+        logger.info(f"Model loaded in {time.time() - start_time:.2f} seconds")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        return False
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "ok",
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "current_model": current_model,
+        "num_models": len(available_models)
+    })
+
+@app.route("/models", methods=["GET"])
+def get_models():
+    """Return available models"""
+    return jsonify({"models": available_models})
+
+@app.route("/generate", methods=["POST"])
+def generate_image():
+    """Generate an image based on input parameters"""
+    global pipe, current_model
+    
+    if pipe is None:
+        return jsonify({"error": "No model loaded"}), 500
+    
+    try:
+        # Get parameters
+        data = request.json
+        prompt = data.get("prompt", "")
+        negative_prompt = data.get("negative_prompt", "")
+        width = data.get("width", 512)
+        height = data.get("height", 512)
+        num_steps = data.get("num_steps", 30)
+        guidance_scale = data.get("guidance_scale", 7.5)
+        seed = data.get("seed", random.randint(1, 2147483647))
+        scheduler_type = data.get("scheduler_type", "dpmsolver++")
+        
+        # Check if we need to switch models
+        model_id = data.get("model_id")
+        if model_id and model_id != current_model["id"]:
+            success = load_model(model_id)
+            if not success:
+                return jsonify({"error": "Failed to load model"}), 500
+        
+        # Set scheduler
+        pipe.scheduler = get_scheduler(scheduler_type, pipe)
+        
+        # Set random seed
+        generator = torch.Generator(device=pipe.device).manual_seed(seed)
+        
+        logger.info(f"Generating image with prompt: '{prompt[:50]}...' (size: {width}x{height}, steps: {num_steps})")
+        start_time = time.time()
+        
+        # Generate image
+        with autocast("cuda" if torch.cuda.is_available() else "cpu"):
+            image = pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=num_steps,
+                guidance_scale=guidance_scale,
+                generator=generator
+            ).images[0]
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        
+        generation_time = time.time() - start_time
+        logger.info(f"Image generated in {generation_time:.2f} seconds")
+        
+        return jsonify({
+            "image_base64": image_base64,
+            "seed": seed,
+            "generation_time": generation_time
+        })
+    
+    except Exception as e:
+        logger.error(f"Error generating image: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/switch_model", methods=["POST"])
+def switch_model():
+    """Switch to a different model"""
+    data = request.json
+    model_id = data.get("model_id")
+    
+    if not model_id:
+        return jsonify({"error": "No model_id provided"}), 400
+    
+    success = load_model(model_id)
+    if success:
+        return jsonify({"status": "ok", "current_model": current_model})
+    else:
+        return jsonify({"error": "Failed to load model"}), 500
+
+# Initialize and start the server
+if __name__ == "__main__":
+    initialize_server()
+    app.run(host="0.0.0.0", port=8001)
